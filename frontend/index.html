@@ -1,0 +1,570 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebGIS UHI - Analiza Miejskiej Wyspy Ciepła</title>
+
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+
+    <style>
+        body { margin: 0; padding: 0; }
+        #map { height: 100vh; width: 100%; }
+
+        /* Styl legendy */
+        .legend {
+            background: white;
+            padding: 10px;
+            border-radius: 5px;
+            box-shadow: 0 0 15px rgba(0,0,0,0.2);
+            line-height: 18px;
+            color: #555;
+            font-family: Arial, sans-serif;
+        }
+        .legend i {
+            width: 18px;
+            height: 18px;
+            float: left;
+            margin-right: 8px;
+            opacity: 0.7;
+        }
+        .legend .ring-sample {
+            display: inline-block;
+            width: 18px;
+            height: 0;
+            border-top: 3px dashed #2e7d32;
+            margin-right: 8px;
+            float: left;
+            margin-top: 8px;
+        }
+        .legend .city-sample {
+            display: inline-block;
+            width: 18px;
+            height: 0;
+            border-top: 3px solid #1565c0;
+            margin-right: 8px;
+            float: left;
+            margin-top: 8px;
+        }
+
+        /* Styl ładowania */
+        .loading-overlay {
+            position: absolute;
+            top: 50%; left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(255,255,255,0.8);
+            padding: 20px;
+            border-radius: 8px;
+            z-index: 2000;
+            font-family: Arial, sans-serif;
+            display: none;
+        }
+
+        /* Styl panelu statystyk (lewy górny) */
+        .stats-panel {
+            position: absolute;
+            top: 20px;
+            left: 50px;
+            z-index: 1000;
+            background: white;
+            padding: 15px;
+            border-radius: 8px;
+            box-shadow: 0 0 15px rgba(0,0,0,0.2);
+            font-family: Arial, sans-serif;
+            min-width: 220px;
+        }
+        .stats-panel h3 { margin: 0 0 10px 0; font-size: 16px; color: #333; border-bottom: 2px solid #ddd; padding-bottom: 5px; }
+        .stat-item { margin-bottom: 5px; font-size: 14px; }
+        .stat-value { font-weight: bold; float: right; }
+        .stat-item.uhi { margin-top: 8px; padding-top: 8px; border-top: 1px dashed #ccc; }
+
+        /* Styl panelu wyboru miasta/roku - TERAZ NA ŚRODKU */
+        .control-panel {
+            position: absolute;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%); /* To centruje element idealnie na środku */
+            z-index: 1000; /* Musi być wysoki, żeby być nad mapą */
+            background: white;
+            padding: 10px 20px;
+            border-radius: 8px;
+            box-shadow: 0 0 15px rgba(0,0,0,0.2);
+            font-family: Arial, sans-serif;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+        select { padding: 5px; font-size: 14px; cursor: pointer; }
+
+        /* Przycisk otwierający szczegóły obszaru referencyjnego */
+        .ref-details-btn {
+            float: right;
+            font-size: 11px;
+            padding: 1px 6px;
+            margin-left: 6px;
+            cursor: pointer;
+            border: 1px solid #2e7d32;
+            color: #2e7d32;
+            background: white;
+            border-radius: 10px;
+        }
+        .ref-details-btn:hover { background: #2e7d32; color: white; }
+
+        /* Modal ze szczegółami obszaru referencyjnego */
+        .ref-modal-overlay {
+            position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.5);
+            z-index: 3000;
+            display: none;
+            align-items: center;
+            justify-content: center;
+        }
+        .ref-modal-overlay.open { display: flex; }
+        .ref-modal {
+            background: white;
+            border-radius: 8px;
+            width: 92%;
+            max-width: 980px;
+            max-height: 88vh;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            font-family: Arial, sans-serif;
+        }
+        .ref-modal-header {
+            display: flex; justify-content: space-between; align-items: center;
+            padding: 12px 18px; border-bottom: 1px solid #ddd;
+        }
+        .ref-modal-header h3 { margin: 0; font-size: 16px; color: #333; }
+        .ref-modal-close {
+            background: none; border: none; font-size: 22px; line-height: 1;
+            cursor: pointer; color: #666;
+        }
+        .ref-modal-body { display: flex; flex: 1; min-height: 0; }
+        #refModalMap { flex: 1.6; min-height: 420px; }
+        .ref-modal-side {
+            flex: 1; min-width: 240px; padding: 14px 18px;
+            overflow-y: auto; border-left: 1px solid #ddd; font-size: 13px;
+        }
+        .ref-modal-side h4 { margin: 14px 0 6px 0; font-size: 13px; color: #333; }
+        .ref-modal-side h4:first-child { margin-top: 0; }
+        .ref-stats-table { border-collapse: collapse; width: 100%; }
+        .ref-stats-table td { padding: 2px 0; }
+        .ref-stats-table td:first-child { color: #555; }
+        .ref-stats-table td:last-child { text-align: right; font-weight: bold; }
+        .lc-row { display: flex; align-items: center; gap: 6px; margin: 4px 0; }
+        .lc-swatch { width: 12px; height: 12px; border-radius: 2px; flex-shrink: 0; }
+        .lc-row.excluded { opacity: 0.5; }
+        .lc-percent { margin-left: auto; font-weight: bold; }
+        .ref-note { color: #777; font-size: 11px; margin-top: 10px; }
+    </style>
+</head>
+<body>
+
+    <div id="map"></div>
+
+    <div class="control-panel">
+        <label for="citySelect"><strong>Miasto:</strong></label>
+        <select id="citySelect" onchange="updateView()">
+            <option value="lublin" selected>Lublin</option>
+            <option value="warszawa">Warszawa</option>
+            <option value="chelm">Chełm</option>
+        </select>
+        <label for="yearSelect"><strong>Rok:</strong></label>
+        <select id="yearSelect" onchange="updateView()">
+            <option value="2023" selected>2023</option>
+            <option value="2022">2022</option>
+            <option value="2021">2021</option>
+            <option value="2020">2020</option>
+            <option value="2019">2019</option>
+            <option value="2018">2018</option>
+            <option value="2017">2017</option>
+            <option value="2016">2016</option>
+            <option value="2015">2015</option>
+            <option value="2014">2014</option>
+        </select>
+    </div>
+
+    <div id="stats" class="stats-panel">
+        <h3 id="stats-title">Statystyki Lublina</h3>
+        <div class="stat-item">Średnia (miasto): <span id="val-mean" class="stat-value">...</span></div>
+        <div class="stat-item">Maksimum: <span id="val-max" class="stat-value">...</span></div>
+        <div class="stat-item">Minimum: <span id="val-min" class="stat-value">...</span></div>
+        <div class="stat-item uhi">
+            Obszar referencyjny: <span id="val-rural" class="stat-value">...</span>
+            <button class="ref-details-btn" onclick="openReferenceModal()" title="Pokrycie terenu i piksele 30m w obszarze referencyjnym">szczegóły</button>
+        </div>
+        <div class="stat-item">Wskaźnik UHI: <span id="val-uhi" class="stat-value">...</span></div>
+    </div>
+
+    <div id="loading" class="loading-overlay">Ładowanie danych z satelity...</div>
+
+    <!-- Modal: szczegóły obszaru referencyjnego (pokrycie terenu + piksele 30m) -->
+    <div id="refModalOverlay" class="ref-modal-overlay">
+        <div class="ref-modal">
+            <div class="ref-modal-header">
+                <h3 id="refModalTitle">Obszar referencyjny</h3>
+                <button class="ref-modal-close" onclick="closeReferenceModal()">&times;</button>
+            </div>
+            <div class="ref-modal-body">
+                <div id="refModalMap"></div>
+                <div class="ref-modal-side">
+                    <div id="refModalStatus">Ładowanie...</div>
+                    <div id="refModalContent" style="display:none;">
+                        <h4>Temperatura (surowe piksele 30m, tylko maska łąka/pole)</h4>
+                        <table class="ref-stats-table">
+                            <tr><td>Mediana</td><td id="ref-median">-</td></tr>
+                            <tr><td>Średnia</td><td id="ref-mean">-</td></tr>
+                            <tr><td>Minimum</td><td id="ref-min">-</td></tr>
+                            <tr><td>Maksimum</td><td id="ref-max">-</td></tr>
+                        </table>
+                        <h4>Pokrycie terenu (cały pierścień)</h4>
+                        <div id="ref-landcover-list"></div>
+                        <div class="ref-note">Przyciemnione klasy nie wchodzą do maski referencyjnej (liczy się tylko łąka/pole).</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+    <script>
+        const API_BASE = 'http://127.0.0.1:8000';
+
+        // Pomocnicza funkcja: fetch + parsowanie JSON + rzucenie czytelnego błędu,
+        // jeśli backend zwrócił status inny niż 2xx (np. 404/500 z komunikatem w "detail").
+        async function fetchJSON(url) {
+            const res = await fetch(url);
+            const data = await res.json();
+            if (!res.ok) {
+                throw new Error(data.detail || `Błąd ${res.status} przy ${url}`);
+            }
+            return data;
+        }
+
+        // Środki i poziomy przybliżenia dla poszczególnych miast (tylko do wycentrowania widoku)
+        const CITY_CENTERS = {
+            lublin:   { lat: 51.2465, lon: 22.5684, zoom: 11, label: 'Lublina' },
+            warszawa: { lat: 52.2297, lon: 21.0122, zoom: 11, label: 'Warszawy' },
+            chelm:    { lat: 51.1431, lon: 23.4719, zoom: 12, label: 'Chełma' }
+        };
+
+        // 1. Inicjalizacja mapy
+        const map = L.map('map').setView([51.2465, 22.5684], 11);
+
+        // Podkład OSM (darmowy, bez klucza API)
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+            maxZoom: 19
+        }).addTo(map);
+
+        // Zmienne globalne (warstwy)
+        let lstLayer = null;
+        let lstLayerRaw = null; // ta sama temperatura, ale bez wygładzania (widać surowe piksele 30m)
+        let ndviLayer = null;
+        let cityBoundaryLayer = null;
+        let referenceRingLayer = null;
+        let layerControl = null;
+        let currentCity = 'lublin';
+        let currentGeomData = null; // ostatnio wczytane granice (city_geojson/reference_geojson) - używane przez modal "szczegóły"
+        let refMap = null; // druga (leniwie tworzona) mapa Leaflet wewnątrz modala obszaru referencyjnego
+        let refRingLayer = null, refLandcoverLayer = null, refLstLayer = null, refLayerControl = null;
+        let currentRequestId = 0; // licznik żądań - chroni przed nadpisaniem widoku przez spóźnioną odpowiedź
+        // Zakresy legendy dla obu wariantów LST - aktualizowane w updateView(),
+        // odczytywane przy każdym przełączeniu warstwy (patrz nasłuch 'overlayadd' niżej).
+        let lstVisSmooth = { min: 20, max: 45 };
+        let lstVisRaw = { min: 20, max: 45 };
+
+        // 2. Główna funkcja aktualizacji widoku (miasto + rok)
+        async function updateView() {
+            const city = document.getElementById('citySelect').value;
+            const year = document.getElementById('yearSelect').value;
+            const loading = document.getElementById('loading');
+
+            // Numer tego żądania - jeśli użytkownik zmieni wybór zanim to się zakończy,
+            // currentRequestId wzrośnie i poniższe guardy po każdym "await" odrzucą ten wynik.
+            const requestId = ++currentRequestId;
+
+            currentCity = city;
+            loading.style.display = 'block';
+            loading.innerText = `Pobieranie danych dla ${CITY_CENTERS[city].label}, rok ${year}...`;
+
+            try {
+                // Wycentrowanie mapy na wybrane miasto
+                const center = CITY_CENTERS[city];
+                map.setView([center.lat, center.lon], center.zoom);
+                document.getElementById('stats-title').innerText = `Statystyki ${center.label}`;
+
+                // Czyścimy stare warstwy
+                if (lstLayer) map.removeLayer(lstLayer);
+                if (lstLayerRaw) map.removeLayer(lstLayerRaw);
+                if (ndviLayer) map.removeLayer(ndviLayer);
+                if (cityBoundaryLayer) map.removeLayer(cityBoundaryLayer);
+                if (referenceRingLayer) map.removeLayer(referenceRingLayer);
+                if (layerControl) map.removeControl(layerControl);
+
+                // Pobieramy wszystko równolegle: mapę LST (wygładzoną i surową), mapę NDVI, granice i statystyki
+                const [lstData, lstDataRaw, ndviData, geomData] = await Promise.all([
+                    fetchJSON(`${API_BASE}/api/map/lst?city=${city}&year=${year}`),
+                    fetchJSON(`${API_BASE}/api/map/lst?city=${city}&year=${year}&smooth=false`),
+                    fetchJSON(`${API_BASE}/api/map/ndvi?city=${city}&year=${year}`),
+                    fetchJSON(`${API_BASE}/api/geometry?city=${city}`)
+                ]);
+
+                // W czasie oczekiwania użytkownik zdążył wybrać coś innego - ta odpowiedź
+                // jest już nieaktualna, więc nic nie rysujemy (nowszy requestId ją wyprzedził).
+                if (requestId !== currentRequestId) return;
+
+                currentGeomData = geomData; // do modala "szczegóły obszaru referencyjnego"
+
+                // Zakresy legendy dla obu wariantów - ustawiamy PRZED addTo(map), bo lstLayer.addTo()
+                // od razu wywoła nasłuch 'overlayadd' niżej, który z nich korzysta.
+                lstVisSmooth = { min: lstData.vis_min, max: lstData.vis_max };
+                lstVisRaw = { min: lstDataRaw.vis_min, max: lstDataRaw.vis_max };
+
+                // Warstwy temperatury (wygładzona - domyślnie widoczna, i surowe piksele 30m - do porównania)
+                // i roślinności
+                lstLayer = L.tileLayer(lstData.url, { opacity: 0.7, attribution: lstData.attribution });
+                lstLayerRaw = L.tileLayer(lstDataRaw.url, { opacity: 0.7, attribution: lstDataRaw.attribution });
+                ndviLayer = L.tileLayer(ndviData.url, { opacity: 0.7, attribution: ndviData.attribution });
+                lstLayer.addTo(map);
+
+                // Legenda LST musi pokazywać TEN SAM zakres, co backend użył do pokolorowania
+                // kafelków (dynamiczny, rozciągnięty na dane tego miasta/roku) - inaczej byłaby myląca.
+                updateLegend(lstVisSmooth.min, lstVisSmooth.max);
+
+                // Granica miasta i obszar referencyjny jako warstwy wektorowe
+                cityBoundaryLayer = L.geoJSON(geomData.city_geojson, {
+                    style: { color: '#1565c0', weight: 2, fill: false }
+                }).addTo(map);
+
+                referenceRingLayer = L.geoJSON(geomData.reference_geojson, {
+                    style: { color: '#2e7d32', weight: 2, dashArray: '6 4', fillOpacity: 0.08, fillColor: '#2e7d32' }
+                }).addTo(map);
+
+                // Kontrolka warstw (prawy górny róg - domyślnie w Leaflet)
+                const overlayMaps = {
+                    "Temperatura (LST)": lstLayer,
+                    "Temperatura (surowe piksele 30m)": lstLayerRaw,
+                    "Roślinność (NDVI)": ndviLayer,
+                    "Granica miasta": cityBoundaryLayer,
+                    "Obszar referencyjny": referenceRingLayer
+                };
+                layerControl = L.control.layers(null, overlayMaps, { collapsed: false }).addTo(map);
+
+                // Statystyki i wskaźnik UHI
+                await Promise.all([
+                    loadStats(city, year, requestId),
+                    loadUHI(city, year, requestId)
+                ]);
+
+            } catch (error) {
+                if (requestId === currentRequestId) {
+                    console.error("Błąd aktualizacji:", error);
+                    alert(`Nie udało się pobrać danych: ${error.message}`);
+                }
+            } finally {
+                if (requestId === currentRequestId) {
+                    loading.style.display = 'none';
+                }
+            }
+        }
+
+        // 3. Pobieranie statystyk (min/maks/średnia w granicach miasta)
+        async function loadStats(city, year, requestId) {
+            try {
+                const data = await fetchJSON(`${API_BASE}/api/stats?city=${city}&year=${year}`);
+                if (requestId !== currentRequestId) return; // odpowiedź spóźniona - nowszy wybór już w toku
+
+                document.getElementById('val-mean').innerText = data.mean_temp + " °C";
+                document.getElementById('val-max').innerText = data.max_temp + " °C";
+                document.getElementById('val-min').innerText = data.min_temp + " °C";
+
+                document.getElementById('val-max').style.color = 'red';
+                document.getElementById('val-min').style.color = 'blue';
+            } catch (error) {
+                if (requestId !== currentRequestId) return;
+                console.error("Błąd statystyk:", error);
+                document.getElementById('val-mean').innerText = "-";
+            }
+        }
+
+        // 3b. Pobieranie wskaźnika UHI (miasto vs. obszar referencyjny)
+        async function loadUHI(city, year, requestId) {
+            try {
+                const data = await fetchJSON(`${API_BASE}/api/uhi?city=${city}&year=${year}`);
+                if (requestId !== currentRequestId) return; // odpowiedź spóźniona - nowszy wybór już w toku
+
+                document.getElementById('val-rural').innerText = data.rural_mean_temp + " °C";
+
+                const uhiVal = document.getElementById('val-uhi');
+                const sign = data.uhi_index > 0 ? '+' : '';
+                uhiVal.innerText = `${sign}${data.uhi_index} °C`;
+                uhiVal.style.color = data.uhi_index > 0 ? '#d32f2f' : '#1565c0';
+            } catch (error) {
+                if (requestId !== currentRequestId) return;
+                console.error("Błąd wskaźnika UHI:", error);
+                document.getElementById('val-rural').innerText = "-";
+                document.getElementById('val-uhi').innerText = "-";
+            }
+        }
+
+        // 3c. Modal ze szczegółami obszaru referencyjnego: pełne pokrycie terenu (WorldCover)
+        // i rozkład temperatury w surowych pikselach 30m SAMEGO pierścienia (nie całego miasta).
+        async function openReferenceModal() {
+            const overlay = document.getElementById('refModalOverlay');
+            const status = document.getElementById('refModalStatus');
+            const content = document.getElementById('refModalContent');
+            const city = document.getElementById('citySelect').value;
+            const year = document.getElementById('yearSelect').value;
+
+            document.getElementById('refModalTitle').innerText =
+                `Obszar referencyjny – ${CITY_CENTERS[city].label}, ${year}`;
+            content.style.display = 'none';
+            status.style.display = 'block';
+            status.innerText = 'Ładowanie...';
+            overlay.classList.add('open');
+
+            // Mapa modala jest tworzona leniwie, dopiero przy pierwszym otwarciu - Leaflet
+            // nie potrafi policzyć rozmiaru kontenera, który był w tym momencie "display:none",
+            // dlatego zawsze wołamy invalidateSize() PO pokazaniu overlay (również przy kolejnych otwarciach).
+            if (!refMap) {
+                refMap = L.map('refModalMap');
+                L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                    attribution: '&copy; OpenStreetMap contributors',
+                    maxZoom: 19
+                }).addTo(refMap);
+            }
+            setTimeout(() => refMap.invalidateSize(), 0);
+
+            // Granicę pierścienia już mamy z głównego widoku (ten sam geoJSON co zielona
+            // przerywana linia na głównej mapie) - nie pobieramy jej drugi raz.
+            if (refRingLayer) refMap.removeLayer(refRingLayer);
+            if (currentGeomData && currentGeomData.reference_geojson) {
+                refRingLayer = L.geoJSON(currentGeomData.reference_geojson, {
+                    style: { color: '#2e7d32', weight: 2, dashArray: '6 4', fill: false }
+                }).addTo(refMap);
+                refMap.fitBounds(refRingLayer.getBounds());
+            }
+
+            try {
+                const data = await fetchJSON(`${API_BASE}/api/reference?city=${city}&year=${year}`);
+
+                if (refLandcoverLayer) refMap.removeLayer(refLandcoverLayer);
+                if (refLstLayer) refMap.removeLayer(refLstLayer);
+                if (refLayerControl) refMap.removeControl(refLayerControl);
+
+                refLandcoverLayer = L.tileLayer(data.landcover_url, { opacity: 0.75 });
+                refLstLayer = L.tileLayer(data.lst_url, { opacity: 0.75 });
+                refLstLayer.addTo(refMap);
+                if (refRingLayer) refRingLayer.bringToFront();
+
+                refLayerControl = L.control.layers(null, {
+                    "Temperatura (surowe 30m)": refLstLayer,
+                    "Pokrycie terenu": refLandcoverLayer
+                }, { collapsed: false }).addTo(refMap);
+
+                const s = data.lst_stats;
+                document.getElementById('ref-median').innerText = (s.median ?? '-') + " °C";
+                document.getElementById('ref-mean').innerText = (s.mean ?? '-') + " °C";
+                document.getElementById('ref-min').innerText = (s.min ?? '-') + " °C";
+                document.getElementById('ref-max').innerText = (s.max ?? '-') + " °C";
+
+                const lcList = document.getElementById('ref-landcover-list');
+                lcList.innerHTML = '';
+                data.landcover_composition.forEach(cls => {
+                    const row = document.createElement('div');
+                    row.className = 'lc-row' + (cls.used_as_reference ? '' : ' excluded');
+                    row.innerHTML =
+                        `<span class="lc-swatch" style="background:#${cls.color}"></span>` +
+                        `<span>${cls.label}</span><span class="lc-percent">${cls.percent}%</span>`;
+                    lcList.appendChild(row);
+                });
+
+                status.style.display = 'none';
+                content.style.display = 'block';
+            } catch (error) {
+                console.error("Błąd szczegółów obszaru referencyjnego:", error);
+                status.innerText = `Nie udało się pobrać danych: ${error.message}`;
+            }
+        }
+
+        function closeReferenceModal() {
+            document.getElementById('refModalOverlay').classList.remove('open');
+        }
+
+        // Zamknięcie modala kliknięciem w półprzezroczyste tło (poza samym oknem)
+        document.getElementById('refModalOverlay').addEventListener('click', function(e) {
+            if (e.target === this) closeReferenceModal();
+        });
+
+        // 4. Obsługa kliknięcia na mapie (punktowy pomiar LST)
+        map.on('click', async function(e) {
+            const year = document.getElementById('yearSelect').value;
+            const lat = e.latlng.lat;
+            const lon = e.latlng.lng;
+            // Jeśli na mapie widoczna jest warstwa surowych pikseli, pytamy serwer bez
+            // wygładzania - żeby liczba w popupie zawsze zgadzała się z kolorem pod kursorem.
+            const smooth = !map.hasLayer(lstLayerRaw);
+            const popup = L.popup().setLatLng(e.latlng).setContent("Pobieranie...").openOn(map);
+
+            try {
+                const data = await fetchJSON(`${API_BASE}/api/lst?lat=${lat}&lon=${lon}&year=${year}&smooth=${smooth}`);
+
+                popup.setContent(`
+                    <div style="text-align: center;">
+                        <strong>Rok: ${year}</strong><br>
+                        Temp LST: <span style="color: #d32f2f; font-weight: bold;">${data.lst_celsius} °C</span>
+                    </div>
+                `);
+            } catch (error) {
+                popup.setContent("Brak danych.");
+            }
+        });
+
+        // 5. Legenda (gradient LST jest przeliczany dynamicznie - patrz updateLegend)
+        const LST_COLORS = ['blue', 'cyan', 'green', 'yellow', 'orange', 'red'];
+        const legend = L.control({position: 'bottomright'});
+        legend.onAdd = function (map) {
+            const div = L.DomUtil.create('div', 'legend');
+            div.innerHTML =
+                '<strong>LST (°C)</strong><br>' +
+                '<div id="legend-gradient"></div>' +
+                '<br><span class="city-sample"></span> Granica miasta<br>' +
+                '<span class="ring-sample"></span> Obszar referencyjny<br>';
+            return div;
+        };
+        legend.addTo(map);
+
+        // Gdy użytkownik przełączy w kontrolce, która warstwa LST jest widoczna
+        // (wygładzona / surowe piksele), legenda ma pokazywać zakres pasujący do TEJ warstwy.
+        map.on('overlayadd', function(e) {
+            if (e.layer === lstLayer) updateLegend(lstVisSmooth.min, lstVisSmooth.max);
+            else if (e.layer === lstLayerRaw) updateLegend(lstVisRaw.min, lstVisRaw.max);
+        });
+
+        // Przelicza legendę gradientu LST na podstawie zakresu min/max faktycznie
+        // użytego przy kolorowaniu bieżącej mapy (zwróconego przez /api/map/lst).
+        function updateLegend(min, max) {
+            const container = document.getElementById('legend-gradient');
+            if (!container || typeof min !== 'number' || typeof max !== 'number') return;
+
+            const step = (max - min) / (LST_COLORS.length - 1);
+            const grades = LST_COLORS.map((_, i) => min + i * step);
+
+            let html = '';
+            for (let i = 0; i < LST_COLORS.length; i++) {
+                const from = grades[i].toFixed(1);
+                const to = grades[i + 1] !== undefined ? grades[i + 1].toFixed(1) : null;
+                html += '<i style="background:' + LST_COLORS[i] + '"></i> ' + from + (to ? '&ndash;' + to + '<br>' : '+<br>');
+            }
+            container.innerHTML = html;
+        }
+
+        // Start
+        updateView();
+    </script>
+</body>
+</html>
